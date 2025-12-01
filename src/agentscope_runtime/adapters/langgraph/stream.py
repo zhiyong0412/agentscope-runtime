@@ -27,7 +27,7 @@ from ...engine.schemas.agent_schemas import (
 
 
 async def adapt_langgraph_message_stream(
-        source_stream: AsyncIterator[Tuple[BaseMessage, bool]],
+    source_stream: AsyncIterator[Tuple[BaseMessage, bool]],
 ) -> AsyncIterator[Message]:
     """
     Optimized version of the stream adapter for LangGraph messages.
@@ -45,7 +45,7 @@ async def adapt_langgraph_message_stream(
         # Determine message role
         if isinstance(msg, HumanMessage):
             role = "user"
-            content = msg.content if hasattr(msg, 'content') else None
+            content = msg.content if hasattr(msg, "content") else None
             if msg_id != getattr(msg, "id"):
                 message = Message(type=MessageType.MESSAGE, role=role)
                 yield message.in_progress()
@@ -63,8 +63,12 @@ async def adapt_langgraph_message_stream(
                 yield message.completed()
         elif isinstance(msg, AIMessage):
             role = "assistant"
-            has_tool_call_chunk = True if getattr(msg, 'tool_call_chunks') else False
-            is_last_chunk = True if getattr(msg, 'chunk_position')=="last" else False
+            has_tool_call_chunk = (
+                True if getattr(msg, "tool_call_chunks") else False
+            )
+            is_last_chunk = (
+                True if getattr(msg, "chunk_position") == "last" else False
+            )
 
             # Extract tool calls if present
             if tool_started:
@@ -87,7 +91,10 @@ async def adapt_langgraph_message_stream(
                             data=FunctionCall(
                                 call_id=call_id,
                                 name=tool_call.get("name", ""),
-                                arguments=json.dumps(tool_call.get("args", {}), ensure_ascii=False),
+                                arguments=json.dumps(
+                                    tool_call.get("args", {}),
+                                    ensure_ascii=False,
+                                ),
                             ).model_dump(),
                             delta=True,
                         )
@@ -104,7 +111,7 @@ async def adapt_langgraph_message_stream(
                     tool_call_chunk_msgs.append(msg)
                 else:
                     # normal message
-                    content = msg.content if hasattr(msg, 'content') else None
+                    content = msg.content if hasattr(msg, "content") else None
                     if msg_id != getattr(msg, "id"):
                         index = None
                         message = Message(type=MessageType.MESSAGE, role=role)
@@ -131,7 +138,7 @@ async def adapt_langgraph_message_stream(
                         yield message.completed()
         elif isinstance(msg, SystemMessage):
             role = "system"
-            content = msg.content if hasattr(msg, 'content') else None
+            content = msg.content if hasattr(msg, "content") else None
             if msg_id != getattr(msg, "id"):
                 message = Message(type=MessageType.MESSAGE, role=role)
                 yield message.in_progress()
@@ -148,7 +155,7 @@ async def adapt_langgraph_message_stream(
                 yield text_delta_content
         elif isinstance(msg, ToolMessage):
             role = "tool"
-            content = msg.content if hasattr(msg, 'content') else None
+            content = msg.content if hasattr(msg, "content") else None
             if msg_id != getattr(msg, "id"):
                 message = Message(type=MessageType.MESSAGE, role=role)
                 yield message.in_progress()
@@ -172,7 +179,7 @@ async def adapt_langgraph_message_stream(
             yield plugin_output_message.completed()
         else:
             role = "assistant"
-            content = msg.content if hasattr(msg, 'content') else None
+            content = msg.content if hasattr(msg, "content") else None
             if msg_id != getattr(msg, "id"):
                 index = None
                 message = Message(type=MessageType.MESSAGE, role=role)

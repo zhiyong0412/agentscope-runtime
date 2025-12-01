@@ -76,12 +76,14 @@ class MyLangGraphRunner(Runner):
         graph = workflow.compile(name="langgraph_agent")
 
         async for chunk, meta_data in graph.astream(
-                input={"messages": msgs},
-                stream_mode="messages",
-                config={"configurable": {"thread_id": session_id}},
+            input={"messages": msgs},
+            stream_mode="messages",
+            config={"configurable": {"thread_id": session_id}},
         ):
             is_last_chunk = (
-                True if getattr(chunk, "chunk_position", "") == "last" else False
+                True
+                if getattr(chunk, "chunk_position", "") == "last"
+                else False
             )
             yield chunk, is_last_chunk
 

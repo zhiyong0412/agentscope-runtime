@@ -103,7 +103,9 @@ def run_langgraph_app():
             config={"configurable": {"thread_id": session_id}},
         ):
             is_last_chunk = (
-                True if getattr(chunk, "chunk_position", "") == "last" else False
+                True
+                if getattr(chunk, "chunk_position", "") == "last"
+                else False
             )
             yield chunk, is_last_chunk
 
@@ -175,7 +177,9 @@ async def test_langgraph_process_endpoint_stream_async(start_langgraph_app):
                 # Check if this event has "output" from the assistant
                 if "output" in event:
                     try:
-                        text_content = event["output"][-1]["content"][0]["text"].lower()
+                        text_content = event["output"][-1]["content"][0][
+                            "text"
+                        ].lower()
                         if text_content:
                             found_response = True
                     except Exception:
@@ -183,7 +187,9 @@ async def test_langgraph_process_endpoint_stream_async(start_langgraph_app):
                         pass
 
             # Final assertion — we must have seen "paris" in at least one event
-            assert found_response, "Did not find 'paris' in any streamed output event"
+            assert (
+                found_response
+            ), "Did not find 'paris' in any streamed output event"
 
 
 @pytest.mark.asyncio
@@ -260,7 +266,9 @@ async def test_langgraph_multi_turn_stream_async(start_langgraph_app):
                 # Check if this event has "output" from the assistant
                 if "output" in event:
                     try:
-                        text_content = event["output"][-1]["content"][0]["text"].lower()
+                        text_content = event["output"][-1]["content"][0][
+                            "text"
+                        ].lower()
                         if text_content:
                             found_response = True
                     except Exception:

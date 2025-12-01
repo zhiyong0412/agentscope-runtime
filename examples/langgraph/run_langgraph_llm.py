@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 
 from langchain.agents import AgentState
@@ -102,7 +103,9 @@ async def list_short_term_memory():
         ch_vals = short_mem.checkpoint["channel_values"]
         # 忽略 __pregel_tasks 字段，该字段不可序列化
         safe_dict = {
-            key: value for key, value in ch_vals.items() if key != "__pregel_tasks"
+            key: value
+            for key, value in ch_vals.items()
+            if key != "__pregel_tasks"
         }
         result.append(safe_dict)
     return result

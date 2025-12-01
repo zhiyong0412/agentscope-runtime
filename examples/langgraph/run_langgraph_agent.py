@@ -96,7 +96,9 @@ async def query_func(
             memory_id = str(uuid.uuid4())
             memory = {"lastest_tool_call": chunk.name}
             global_long_term_memory.put(
-                namespace_for_long_term_memory, memory_id, memory
+                namespace_for_long_term_memory,
+                memory_id,
+                memory,
             )
         yield chunk, is_last_chunk
 
@@ -131,7 +133,9 @@ async def list_short_term_memory():
         ch_vals = short_mem.checkpoint["channel_values"]
         # 忽略 __pregel_tasks 字段，该字段不可序列化
         safe_dict = {
-            key: value for key, value in ch_vals.items() if key != "__pregel_tasks"
+            key: value
+            for key, value in ch_vals.items()
+            if key != "__pregel_tasks"
         }
         result.append(safe_dict)
     return result
@@ -142,7 +146,9 @@ async def get_long_term_memory(user_id: str):
     if global_short_term_memory is None:
         return {"error": "Short-term memory not initialized yet."}
     namespace_for_long_term_memory = (user_id, "memories")
-    long_term_mem = global_long_term_memory.search(namespace_for_long_term_memory)
+    long_term_mem = global_long_term_memory.search(
+        namespace_for_long_term_memory
+    )
 
     def serialize_search_item(item):
         return {
