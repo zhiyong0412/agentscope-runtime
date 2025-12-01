@@ -1,26 +1,18 @@
 # -*- coding: utf-8 -*-
 import os
-import sqlite3
-import time
 import uuid
-from dataclasses import dataclass
-from typing import Any
 
-from langchain.agents import create_agent, AgentState
+from langchain.agents import AgentState, create_agent
 from langchain.tools import tool
-from langchain_core.messages import AIMessage, ChatMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.store.base import BaseStore
+from langgraph.store.memory import InMemoryStore
 
 from agentscope_runtime.engine import AgentApp
 from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
-from langchain.agents.middleware import SummarizationMiddleware
-from langgraph.store.memory import InMemoryStore
 
-# 创建全局内存存储引用，以便跨函数访问
 global_short_term_memory: BaseCheckpointSaver = None
 global_long_term_memory: BaseStore = None
 
@@ -30,41 +22,6 @@ def get_weather(location: str, date: str) -> str:
     """Get the weather for a location and date."""
     print(f"Getting weather for {location} on {date}...")
     return f"The weather in {location} is sunny with a temperature of 25°C."
-
-
-# tools = [get_weather]
-# # Choose the LLM that will drive the agent
-# llm = ChatOpenAI(
-#     model="qwen-plus",
-#     api_key=os.environ.get("DASHSCOPE_API_KEY"),
-#     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-# )
-#
-# prompt = """You are a proactive research assistant. """
-#
-# agent = create_agent(llm, tools, system_prompt=prompt)
-
-# def add_time(state: MessagesState):
-#     print("Adding time...")
-#     curr_time = time.strftime("%Y-%m-%d", time.localtime())
-#     new_message = HumanMessage(content=f"今天是 {curr_time}")
-#     return {"messages": [new_message]}
-
-
-# # Create the graph
-# workflow = StateGraph(MessagesState)
-#
-# # Add a single node that runs the agent
-# workflow.add_node("agent", agent)
-# workflow.add_node("add_time", add_time)
-#
-# # Add edges
-# workflow.add_edge(START, "add_time")
-# workflow.add_edge("add_time", "agent")
-# workflow.add_edge("agent", END)
-#
-# # Compile graph
-# graph = workflow.compile()
 
 
 # Create the AgentApp instance
@@ -137,7 +94,9 @@ async def query_func(
         if meta_data["langgraph_node"] == "tools":
             memory_id = str(uuid.uuid4())
             memory = {"lastest_tool_call": chunk.name}
-            global_long_term_memory.put(namespace_for_long_term_memory, memory_id, memory)
+            global_long_term_memory.put(
+                namespace_for_long_term_memory, memory_id, memory
+            )
         yield chunk, is_last_chunk
 
 
@@ -156,8 +115,9 @@ async def get_short_term_memory(session_id: str):
     return {
         "session_id": session_id,
         "messages": value.checkpoint["channel_values"]["messages"],
-        "metadata": value.metadata
+        "metadata": value.metadata,
     }
+
 
 @agent_app.endpoint("/api/memory/short-term", methods=["GET"])
 async def list_short_term_memory():
@@ -170,11 +130,11 @@ async def list_short_term_memory():
         ch_vals = short_mem.checkpoint["channel_values"]
         # 忽略 __pregel_tasks 字段，该字段不可序列化
         safe_dict = {
-            key: value for key, value in ch_vals.items()
-            if key != "__pregel_tasks"
+            key: value for key, value in ch_vals.items() if key != "__pregel_tasks"
         }
         result.append(safe_dict)
     return result
+
 
 @agent_app.endpoint("/api/memory/long-term/{user_id}", methods=["GET"])
 async def get_long_term_memory(user_id: str):
@@ -182,7 +142,20 @@ async def get_long_term_memory(user_id: str):
         return {"error": "Short-term memory not initialized yet."}
     namespace_for_long_term_memory = (user_id, "memories")
     long_term_mem = global_long_term_memory.search(namespace_for_long_term_memory)
-    return long_term_mem
+
+    def serialize_search_item(item):
+        return {
+            "namespace": item.namespace,
+            "key": item.key,
+            "value": item.value,
+            "created_at": item.created_at,
+            "updated_at": item.updated_at,
+            "score": item.score,
+        }
+
+    serialized = [serialize_search_item(item) for item in long_term_mem]
+    return serialized
+
 
 if __name__ == "__main__":
     agent_app.run(host="127.0.0.1", port=8090)
