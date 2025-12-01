@@ -4,8 +4,13 @@ import os
 import pytest
 from unittest.mock import AsyncMock, Mock
 
+from langchain.agents import AgentState
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableLambda
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.constants import START
+from langgraph.graph import StateGraph
 
 from agentscope_runtime.engine.schemas.agent_schemas import (
     AgentRequest,
@@ -29,6 +34,18 @@ class MyLangGraphRunner(Runner):
         super().__init__()
         self.framework_type = "langgraph"
 
+    async def init_handler(self, *args, **kwargs):
+        """
+        Init handler.
+        """
+        self.short_term_mem = InMemorySaver()
+
+    async def shutdown_handler(self, *args, **kwargs):
+        """
+        Shutdown handler.
+        """
+        pass
+
     async def query_handler(
         self,
         msgs,
@@ -40,222 +57,153 @@ class MyLangGraphRunner(Runner):
         """
         session_id = request.session_id
         user_id = request.user_id
-
-        state = await self.state_service.export_state(
-            session_id=session_id,
-            user_id=user_id,
+        print(f"Received query from user {user_id} with session {session_id}")
+        llm = ChatOpenAI(
+            model="qwen-plus",
+            api_key=os.environ.get("DASHSCOPE_API_KEY"),
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
 
-        # Create a simple LangGraph-like chain for testing
-        def simple_response(inputs):
-            return AIMessage(content=f"Echo: {inputs['input']}")
+        def call_model(state: AgentState):
+            """Call the LLM to generate a joke about a topic"""
+            # Note that message events are emitted even when the LLM is run using .invoke rather than .stream
+            model_response = llm.invoke(state["messages"])
+            return {"messages": model_response}
 
-        chain = RunnableLambda(simple_response)
+        workflow = StateGraph(AgentState)
+        workflow.add_node("call_model", call_model)
+        workflow.add_edge(START, "call_model")
+        graph = workflow.compile(name="langgraph_agent")
 
-        # Convert messages to LangGraph format if needed
-        if hasattr(msgs, "__iter__") and not isinstance(msgs, str):
-            input_text = " ".join(
-                [str(getattr(msg, "content", msg)) for msg in msgs],
-            )
-        else:
-            input_text = str(msgs)
-
-        # Run the chain
-        response = chain.invoke({"input": input_text})
-
-        # Yield the response with last flag
-        yield response, True
-
-        # Save state if needed
-        # For this simple test, we don't need to save complex state
-
-
-@pytest.mark.asyncio
-async def test_langgraph_runner_stream():
-    """Test LangGraph runner with streaming output."""
-    # Setup services
-    state_service = InMemoryStateService()
-    session_service = InMemorySessionHistoryService()
-
-    await state_service.start()
-    await session_service.start()
-
-    # Create runner
-    runner = MyLangGraphRunner()
-    runner.state_service = state_service
-    runner.session_service = session_service
-
-    # Create request
-    request = AgentRequest(
-        input=[
-            {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
-        ],
-        user_id="test_user",
-        session_id="test_session",
-    )
-
-    # Run the agent
-    response_count = 0
-    async for response, is_last in runner.run(request):
-        response_count += 1
-
-        # Verify response structure
-        assert isinstance(response, AIMessage)
-        assert "Echo:" in response.content
-        assert isinstance(is_last, bool)
-
-        # For this simple test, we expect only one response
-        if response_count > 1:
-            pytest.fail("Expected only one response")
-
-    # Verify we got exactly one response
-    assert response_count == 1
-
-    # Cleanup
-    await state_service.stop()
-    await session_service.stop()
-
-
-@pytest.mark.asyncio
-async def test_langgraph_runner_with_memory():
-    """Test LangGraph runner with memory integration."""
-    # Setup services
-    state_service = InMemoryStateService()
-    session_service = InMemorySessionHistoryService()
-
-    await state_service.start()
-    await session_service.start()
-
-    # Create memory
-    memory = LangGraphSessionHistoryMemory(
-        service=session_service,
-        user_id="test_user",
-        session_id="test_session",
-    )
-
-    # Add initial message to memory
-    initial_message = HumanMessage(content="Previous conversation")
-    await memory.add(initial_message)
-
-    # Verify memory content
-    memory_content = await memory.get_memory()
-    assert len(memory_content) == 1
-    assert isinstance(memory_content[0], HumanMessage)
-    assert memory_content[0].content == "Previous conversation"
-
-    # Cleanup
-    await state_service.stop()
-    await session_service.stop()
-
-
-@pytest.mark.asyncio
-async def test_langgraph_runner_multi_turn():
-    """Test LangGraph runner with multi-turn conversation."""
-    # Setup services
-    state_service = InMemoryStateService()
-    session_service = InMemorySessionHistoryService()
-
-    await state_service.start()
-    await session_service.start()
-
-    # Create runner
-    runner = MyLangGraphRunner()
-    runner.state_service = state_service
-    runner.session_service = session_service
-
-    # First turn
-    request1 = AgentRequest(
-        input=[
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "First message"}],
-            },
-        ],
-        user_id="test_user",
-        session_id="test_session",
-    )
-
-    responses_first = []
-    async for response, is_last in runner.run(request1):
-        responses_first.append((response, is_last))
-
-    assert len(responses_first) == 1
-    assert isinstance(responses_first[0][0], AIMessage)
-    assert "Echo: First message" in responses_first[0][0].content
-
-    # Second turn
-    request2 = AgentRequest(
-        input=[
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": "Second message"}],
-            },
-        ],
-        user_id="test_user",
-        session_id="test_session",
-    )
-
-    responses_second = []
-    async for response, is_last in runner.run(request2):
-        responses_second.append((response, is_last))
-
-    assert len(responses_second) == 1
-    assert isinstance(responses_second[0][0], AIMessage)
-    assert "Echo: Second message" in responses_second[0][0].content
-
-    # Cleanup
-    await state_service.stop()
-    await session_service.stop()
-
-
-@pytest.mark.asyncio
-async def test_langgraph_runner_error_handling():
-    """Test LangGraph runner error handling."""
-
-    class ErrorRunner(Runner):
-        def __init__(self) -> None:
-            super().__init__()
-            self.framework_type = "langgraph"
-
-        async def query_handler(
-            self,
-            msgs,
-            request: AgentRequest = None,
-            **kwargs,
+        async for chunk, meta_data in graph.astream(
+                input={"messages": msgs},
+                stream_mode="messages",
+                config={"configurable": {"thread_id": session_id}},
         ):
-            """Handler that raises an exception."""
-            raise ValueError("Test error")
+            is_last_chunk = (
+                True if getattr(chunk, "chunk_position", "") == "last" else False
+            )
+            yield chunk, is_last_chunk
 
-    # Setup services
-    state_service = InMemoryStateService()
-    session_service = InMemorySessionHistoryService()
 
-    await state_service.start()
-    await session_service.start()
+@pytest.mark.asyncio
+async def test_runner_sample1():
+    from dotenv import load_dotenv
 
-    # Create runner
-    runner = ErrorRunner()
-    runner.state_service = state_service
-    runner.session_service = session_service
+    load_dotenv("../../.env")
 
-    # Create request
-    request = AgentRequest(
-        input=[
-            {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
-        ],
-        user_id="test_user",
-        session_id="test_session",
+    request = AgentRequest.model_validate(
+        {
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "杭州的天气怎么样？",
+                        },
+                    ],
+                },
+                {
+                    "type": "function_call",
+                    "content": [
+                        {
+                            "type": "data",
+                            "data": {
+                                "call_id": "call_eb113ba709d54ab6a4dcbf",
+                                "name": "get_current_weather",
+                                "arguments": '{"location": "杭州"}',
+                            },
+                        },
+                    ],
+                },
+                {
+                    "type": "function_call_output",
+                    "content": [
+                        {
+                            "type": "data",
+                            "data": {
+                                "call_id": "call_eb113ba709d54ab6a4dcbf",
+                                "output": '{"temperature": 25, "unit": '
+                                '"Celsius"}',
+                            },
+                        },
+                    ],
+                },
+            ],
+            "stream": True,
+            "session_id": "Test Session",
+        },
     )
 
-    # Run the agent and expect error to be handled gracefully
-    with pytest.raises(ValueError, match="Test error"):
-        async for response, is_last in runner.run(request):
-            pass  # Should not reach here
+    print("\n")
+    final_text = ""
+    async with MyLangGraphRunner() as runner:
+        async for message in runner.stream_query(
+            request=request,
+        ):
+            print(message.model_dump_json())
+            if message.object == "message":
+                if MessageType.MESSAGE == message.type:
+                    if RunStatus.Completed == message.status:
+                        res = message.content
+                        print(res)
+                        if res and len(res) > 0:
+                            final_text = res[0].text
+                            print(final_text)
+                if MessageType.FUNCTION_CALL == message.type:
+                    if RunStatus.Completed == message.status:
+                        res = message.content
+                        print(res)
 
-    # Cleanup
-    await state_service.stop()
-    await session_service.stop()
+        print("\n")
+    assert "杭州" in final_text
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
+@pytest.mark.asyncio
+async def test_runner_sample2():
+    from dotenv import load_dotenv
+
+    load_dotenv("../../.env")
+
+    request = AgentRequest.model_validate(
+        {
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "What is in https://example.com?",
+                        },
+                    ],
+                },
+            ],
+            "stream": True,
+            "session_id": "Test Session",
+        },
+    )
+
+    print("\n")
+    final_text = ""
+    async with MyLangGraphRunner() as runner:
+        async for message in runner.stream_query(
+            request=request,
+        ):
+            print(message.model_dump_json())
+            if message.object == "message":
+                if MessageType.MESSAGE == message.type:
+                    if RunStatus.Completed == message.status:
+                        res = message.content
+                        print(res)
+                        if res and len(res) > 0:
+                            final_text = res[0].text
+                            print(final_text)
+                if MessageType.FUNCTION_CALL == message.type:
+                    if RunStatus.Completed == message.status:
+                        res = message.content
+                        print(res)
+
+        print("\n")
+
+    assert "example.com" in final_text

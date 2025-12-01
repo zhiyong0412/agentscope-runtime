@@ -82,6 +82,7 @@ async def query_func(
         checkpointer=self.short_term_mem,
         store=self.long_term_mem,
         state_schema=CustomAgentState,
+        name="LangGraphAgent",
     )
     async for chunk, meta_data in agent.astream(
         input={"messages": msgs, "session_id": session_id, "user_id": user_id},

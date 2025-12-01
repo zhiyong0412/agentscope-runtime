@@ -59,7 +59,7 @@ async def query_func(
     workflow = StateGraph(AgentState)
     workflow.add_node("call_model", call_model)
     workflow.add_edge(START, "call_model")
-    graph = workflow.compile()
+    graph = workflow.compile(name="langgraph_agent")
 
     async for chunk, meta_data in graph.astream(
         input={"messages": msgs},
