@@ -230,7 +230,7 @@ class Runner:
         request.session_id = request.session_id or str(uuid.uuid4())
 
         # Assign user ID
-        request.user_id = request.session_id or request.session_id
+        request.user_id = request.user_id or request.user_id
 
         query_kwargs = {
             "request": request,

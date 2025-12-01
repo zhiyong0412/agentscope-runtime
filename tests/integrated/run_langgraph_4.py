@@ -182,7 +182,19 @@ async def get_long_term_memory(user_id: str):
         return {"error": "Short-term memory not initialized yet."}
     namespace_for_long_term_memory = (user_id, "memories")
     long_term_mem = global_long_term_memory.search(namespace_for_long_term_memory)
-    return long_term_mem
+
+    def serialize_search_item(item):
+        return {
+            "namespace": item.namespace,
+            "key": item.key,
+            "value": item.value,
+            "created_at": item.created_at,
+            "updated_at": item.updated_at,
+            "score": item.score,
+        }
+
+    serialized = [serialize_search_item(item) for item in long_term_mem]
+    return serialized
 
 if __name__ == "__main__":
     agent_app.run(host="127.0.0.1", port=8090)
