@@ -1,32 +1,23 @@
 # -*- coding: utf-8 -*-
 """Integration test for LangGraph AgentApp."""
-import multiprocessing
-import time
 import json
+import multiprocessing
+import os
+import time
+from typing import TypedDict
 
 import aiohttp
 import pytest
+from langchain.tools import tool
 from langchain_core.messages import HumanMessage
-import os
-
-from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from typing_extensions import Annotated
-from langchain.tools import tool
 
 from agentscope_runtime.engine import AgentApp
 from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
-from agentscope_runtime.engine.services.agent_state import (
-    InMemoryStateService,
-)
-from agentscope_runtime.engine.services.session_history import (
-    InMemorySessionHistoryService,
-)
-
-from typing import TypedDict
-from langgraph.graph import StateGraph, START, END
-
 
 PORT = 8091  # Use different port from other tests
 
@@ -59,21 +50,21 @@ prompt = """You are a proactive assistant. """
 
 
 def build_graph():
-    agent = create_agent(llm, tools, system_prompt=prompt)
+    llm = ChatOpenAI(
+        model="qwen-plus",
+        api_key=os.environ.get("DASHSCOPE_API_KEY"),
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
 
-    # Create the graph
+    def call_model(state: AgentState):
+        """Call the LLM to generate a joke about a topic"""
+        # Note that message events are emitted even when the LLM is run using .invoke rather than .stream
+        model_response = llm.invoke(state["messages"])
+        return {"messages": model_response}
+
     workflow = StateGraph(AgentState)
-
-    # Add a single node that runs the agent
-    workflow.add_node("agent", agent)
-    workflow.add_node("add_time", add_time)
-
-    # Add edges
-    workflow.add_edge(START, "add_time")
-    workflow.add_edge("add_time", "agent")
-    workflow.add_edge("agent", END)
-
-    # Compile graph
+    workflow.add_node("call_model", call_model)
+    workflow.add_edge(START, "call_model")
     graph = workflow.compile()
     return graph
 
@@ -87,16 +78,11 @@ def run_langgraph_app():
 
     @agent_app.init
     async def init_func(self):
-        self.state_service = InMemoryStateService()
-        self.session_service = InMemorySessionHistoryService()
-
-        await self.state_service.start()
-        await self.session_service.start()
+        self.short_term_mem = InMemorySaver()
 
     @agent_app.shutdown
     async def shutdown_func(self):
-        await self.state_service.stop()
-        await self.session_service.stop()
+        pass
 
     @agent_app.query(framework="langgraph")
     async def query_func(
@@ -109,19 +95,17 @@ def run_langgraph_app():
         session_id = request.session_id
         user_id = request.user_id
 
-        input = {"messages": [HumanMessage(content="北京天气如何？")]}
         graph = build_graph()
 
-        complete_chunk = {}
-        # async for chunk in graph.astream(input, stream_mode="messages"):
-        #     complete_chunk.update(chunk[0])
-        #     yield chunk[0], False
-        for chunk in graph.stream(input, stream_mode="messages"):
-            complete_chunk.update(chunk[0])
-            yield chunk[0], False
-
-        # Yield the final message with last flag set to True
-        yield None, True
+        async for chunk, meta_data in graph.astream(
+            input={"messages": msgs},
+            stream_mode="messages",
+            config={"configurable": {"thread_id": session_id}},
+        ):
+            is_last_chunk = (
+                True if getattr(chunk, "chunk_position", "") == "last" else False
+            )
+            yield chunk, is_last_chunk
 
     agent_app.run(host="127.0.0.1", port=PORT)
 
@@ -191,9 +175,7 @@ async def test_langgraph_process_endpoint_stream_async(start_langgraph_app):
                 # Check if this event has "output" from the assistant
                 if "output" in event:
                     try:
-                        text_content = event["output"][-1]["content"][0][
-                            "text"
-                        ].lower()
+                        text_content = event["output"][-1]["content"][0]["text"].lower()
                         if text_content:
                             found_response = True
                     except Exception:
@@ -201,9 +183,7 @@ async def test_langgraph_process_endpoint_stream_async(start_langgraph_app):
                         pass
 
             # Final assertion — we must have seen "paris" in at least one event
-            assert (
-                found_response
-            ), "Did not find 'paris' in any streamed output event"
+            assert found_response, "Did not find 'paris' in any streamed output event"
 
 
 @pytest.mark.asyncio
@@ -245,7 +225,6 @@ async def test_langgraph_multi_turn_stream_async(start_langgraph_app):
                 data_str = line[len("data:") :].strip()
                 event = json.loads(data_str)
 
-
     # Second turn - Optimized based on test_langgraph_process_endpoint_stream_async
     payload2 = {
         "input": [
@@ -281,9 +260,7 @@ async def test_langgraph_multi_turn_stream_async(start_langgraph_app):
                 # Check if this event has "output" from the assistant
                 if "output" in event:
                     try:
-                        text_content = event["output"][-1]["content"][0][
-                            "text"
-                        ].lower()
+                        text_content = event["output"][-1]["content"][0]["text"].lower()
                         if text_content:
                             found_response = True
                     except Exception:
@@ -293,7 +270,6 @@ async def test_langgraph_multi_turn_stream_async(start_langgraph_app):
             assert (
                 found_response
             ), "Did not find expected response in the second turn output"
-
 
 
 if __name__ == "__main__":
